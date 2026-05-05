@@ -5,7 +5,7 @@ scikit-image
 numpy
 pillow
 paddleocr==3.5.0
-paddlepaddle
+paddlepaddle==3.0.0  # newer CPU builds hit a PIR/oneDNN inference bug under paddleocr 3.5.0
 langchain-text-splitters  # paddlex (paddleocr dep) imports this unconditionally
 
 # Symbol detection (GPU recommended, runs on Colab). Stage 9+.
