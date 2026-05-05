@@ -6,6 +6,7 @@ numpy
 pillow
 paddleocr==3.5.0
 paddlepaddle
+langchain-text-splitters  # paddlex (paddleocr dep) imports this unconditionally
 
 # Symbol detection (GPU recommended, runs on Colab). Stage 9+.
 transformers
