@@ -1,0 +1,17 @@
+# Preprocessing + OCR (CPU, runs anywhere)
+pymupdf
+opencv-python
+scikit-image
+numpy
+pillow
+paddleocr==3.5.0
+paddlepaddle
+
+# Symbol detection (GPU recommended, runs on Colab). Stage 9+.
+transformers
+torch
+faiss-cpu
+
+# Notebooks
+ipykernel
+ipython

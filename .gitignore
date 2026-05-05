@@ -1,0 +1,32 @@
+# Data
+data/sips/*
+data/refs/*
+!data/refs/README.md
+!data/sips/README.md
+
+# Sample SIPs dropped at the repo root (legacy location)
+*.pdf
+
+# Claude Code per-user state
+.claude/
+
+# Outputs (regenerable)
+outputs/
+library/
+sip_outputs/
+
+# Model cache
+.model_cache/
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# OS
+.DS_Store

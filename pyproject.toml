@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sip-extractor"
+version = "0.1.0"
+description = "Extract structured JSON (tracks, text, signal symbols) from Indian Railways Signaling Interlocking Plan PDFs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "sip-extractor contributors" }]
+dependencies = [
+    "pymupdf",
+    "opencv-python",
+    "scikit-image",
+    "numpy",
+    "pillow",
+    "paddleocr==3.5.0",
+    "paddlepaddle",
+]
+
+[project.optional-dependencies]
+symbols = ["transformers", "torch", "faiss-cpu"]
+notebooks = ["ipykernel", "ipython"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["sip_extractor*"]
+exclude = ["notebooks*", "data*", "library*", "outputs*"]
