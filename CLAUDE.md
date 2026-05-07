@@ -8,8 +8,9 @@ For full background, schema decisions, and rationale, see [HANDOFF.md](HANDOFF.m
 
 - **Stages 1-7 (working):** PDF render, color-markup removal, Sauvola binarize, edge crop, OCR (PaddleOCR 3.5.0), regex text classification. Live in [sip_preprocessing.ipynb](sip_preprocessing.ipynb).
 - **Stage 8 (broken):** Track detection. Multiple iterations failed. Deferred until after Stage 9. Do not retry without reading the failure modes in HANDOFF.md.
-- **Symbol library (working):** Exemplar extraction from reference PDFs is implemented in [build_library.ipynb](build_library.ipynb). Produces `library/<class_name>/exemplar_NN.png` plus `library/index.json`.
-- **Stages 9, 9.5, 10, 11 (not built):** symbol detection, VLM OCR fallback, signal composition, final merged JSON.
+- **Symbol library (working):** Exemplar extraction from reference PDFs in [notebooks/02_build_library.ipynb](notebooks/02_build_library.ipynb). Produces `library/<class_name>/exemplar_NN.png` plus `library/index.json`.
+- **Stage 9 (working, untuned):** Symbol detection. Template matching for KM marker / S/B box / BSLB / GL; DINOv2-base nearest-neighbor for Distant / Home / Starter / Shunt / Calling-on. Module: [sip_extractor/symbols.py](sip_extractor/symbols.py). Entry point: [notebooks/03_detect_symbols.ipynb](notebooks/03_detect_symbols.ipynb). Thresholds (`0.7` template correlation, `0.6` cosine) are starting points; tune empirically per SIP.
+- **Stages 9.5, 10, 11 (not built):** VLM OCR fallback, signal composition, final merged JSON.
 
 ## Repository Layout
 
@@ -19,12 +20,20 @@ For full background, schema decisions, and rationale, see [HANDOFF.md](HANDOFF.m
 sip-extractor/
 ├── HANDOFF.md
 ├── CLAUDE.md
-├── sip_preprocessing.ipynb         # Stages 1-8 monolith
-├── build_library.ipynb             # symbol library extraction
-└── MUNDEWADI_..._SIP_..._.pdf      # primary test SIP
+├── README.md
+├── pyproject.toml
+├── requirements.txt
+├── sip_extractor/
+│   ├── preprocessing.py  ocr.py  classify.py  symbols.py  schema.py
+│   └── utils/{geometry.py, io.py}
+├── notebooks/
+│   ├── 01_preprocess.ipynb         # Stages 1-7 (preprocess + OCR + classify)
+│   ├── 02_build_library.ipynb      # symbol library extraction (one-time)
+│   └── 03_detect_symbols.ipynb     # Stage 9 (template match + DINOv2 NN)
+├── data/{refs,sips}/               # gitignored
+├── library/                        # gitignored, regenerable
+└── sip_preprocessing.ipynb         # legacy Stages 1-8 monolith (kept until Stage 8 is rebuilt)
 ```
-
-No package, no `pyproject.toml`, no `requirements.txt`, no `.gitignore`, no `outputs/` or `library/` yet. These get created as the refactor proceeds.
 
 ### Target (per HANDOFF.md)
 
@@ -79,7 +88,7 @@ Caching models on Drive saves 30-60s per session for PaddleOCR and DINOv2, sever
 | 6 | PaddleOCR (tile-based) | working | local 30-60s, Colab T4 5-10s |
 | 7 | Text classification (regex) | working | anywhere, instant |
 | 8 | Track detection | **broken, deferred** | n/a |
-| 9 | Symbol detection (template match + DINOv2 NN) | not built | Colab GPU preferred |
+| 9 | Symbol detection (template match + DINOv2 NN) | working, untuned | Colab GPU preferred |
 | 9.5 | VLM fallback for low-confidence OCR (Qwen2.5-VL-3B) | not built | Colab GPU |
 | 10 | Signal composition (atom symbols → typed signals) | not built | CPU |
 | 11 | Final merged JSON | not built | CPU |
@@ -120,10 +129,10 @@ Caching models on Drive saves 30-60s per session for PaddleOCR and DINOv2, sever
 
 ## Symbol Library (Stage 9 input)
 
-Already extracted by `build_library.ipynb`:
+Built by `notebooks/02_build_library.ipynb` from reference PDFs in `data/refs/`:
 - 31 distinct classes, 60 exemplars total.
 - Sources: `Types_of_signals.pdf` (33 exemplars), `Types_of_signals_ncr.pdf` (27 exemplars, includes the S/B station-building box).
-- First-iteration scope for detection: 9 most common classes (Distant, Home, Starter, Shunt, Calling-on, KM marker, S/B box, BSLB, GL).
+- First-iteration scope for detection: 9 most common classes (Distant, Home, Starter, Shunt, Calling-on, KM marker, S/B box, BSLB, GL). The `Library` loader in `symbols.py` keyword-matches these onto the user's slug names.
 
 ## Test Sample
 
@@ -131,19 +140,22 @@ Already extracted by `build_library.ipynb`:
 
 ## Roadmap
 
-In priority order (from HANDOFF.md "Immediate Action Items"):
+In priority order:
 
-1. Create package skeleton: `pyproject.toml`, `requirements.txt`, `.gitignore`, empty `sip_extractor/` modules, `notebooks/` directory.
-2. Refactor Stages 1-7 out of `sip_preprocessing.ipynb` into `preprocessing.py`, `ocr.py`, `classify.py`. Each module exposes a clean function taking input paths and writing outputs.
-3. Create `notebooks/01_preprocess.ipynb` as a thin entry point with the Colab+local setup cell.
-4. Move `build_library.ipynb` to `notebooks/02_build_library.ipynb`. Verify it works against the new layout.
-5. Build symbol detection (Stage 9) in `sip_extractor/symbols.py`. Start with template matching, then DINOv2 NN. Entry point: `notebooks/03_detect_symbols.ipynb` (Colab-first).
+1. ~~Create package skeleton.~~ Done.
+2. ~~Refactor Stages 1-7 into the package.~~ Done.
+3. ~~Create `notebooks/01_preprocess.ipynb`.~~ Done.
+4. ~~Move `build_library.ipynb` to `notebooks/02_build_library.ipynb`.~~ Done.
+5. ~~Build Stage 9 (template matching + DINOv2 NN). Entry point at `notebooks/03_detect_symbols.ipynb`.~~ Done. Outputs untuned; first task on the next pass is to inspect the overlay against MUNDEWADI and adjust thresholds.
 6. Add VLM fallback (Stage 9.5) for crops with PaddleOCR confidence < 0.6 or that fail all regex patterns. Add `engine` field (`paddleocr` | `qwen-vl`) to text entries.
-7. Re-attempt Stage 8 only after Stage 9 works. Use signal-post Y positions as anchors for finding horizontal lines. Do not repeat the failed approaches above.
+7. Build Stage 10 (signal composition: atom symbols → typed signals via rules like "post + 4 ellipses + JR marker = MainHomeWithJR").
+8. Re-attempt Stage 8 only after Stage 9 is tuned. Use signal-post Y positions as anchors for finding horizontal lines. Do not repeat the failed approaches above.
+9. Build Stage 11 (final merged JSON: tracks + symbols + text into one canonical document).
 
 ## Files to Read for Deeper Context
 
 - [HANDOFF.md](HANDOFF.md) — authoritative source for goals, schema decisions, failure-mode post-mortems, and detailed stage descriptions.
-- [sip_preprocessing.ipynb](sip_preprocessing.ipynb) — current Stages 1-8 in one notebook. Splits during refactor.
-- [build_library.ipynb](build_library.ipynb) — symbol library extraction. Moves to `notebooks/02_build_library.ipynb`.
-- `library/index.json` — class catalog (after running build_library).
+- [sip_preprocessing.ipynb](sip_preprocessing.ipynb) — legacy Stages 1-8 monolith; superseded by the `notebooks/` entry points but retained until Stage 8 is rebuilt.
+- [notebooks/01_preprocess.ipynb](notebooks/01_preprocess.ipynb), [notebooks/02_build_library.ipynb](notebooks/02_build_library.ipynb), [notebooks/03_detect_symbols.ipynb](notebooks/03_detect_symbols.ipynb) — current per-stage entry points.
+- [sip_extractor/symbols.py](sip_extractor/symbols.py) — Stage 9 detector (template match + DINOv2 NN).
+- `library/index.json` — class catalog (after running 02_build_library).

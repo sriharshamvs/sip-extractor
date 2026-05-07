@@ -203,26 +203,26 @@ Recommended path forward: skip track detection until symbol detection works. Onc
 
 If symbols give us 50+ spatial anchors per SIP, track detection becomes "find horizontal lines that pass through these anchor Y positions" — a much easier problem.
 
-### Stage 9: Symbol Detection (NOT BUILT, this is what to build next)
+### Stage 9: Symbol Detection (WORKING, untuned)
 
 Step 1: Library extraction (DONE in `notebooks/02_build_library.ipynb`)
 
-Extracts symbol exemplars from reference PDFs:
+Extracts symbol exemplars from reference PDFs in `data/refs/`:
 - `Types_of_signals.pdf` — 21 pages, 3-column table, ~37 rows, 23 with images, 33 exemplars total
 - `Types_of_signals_ncr.pdf` — 9 pages, free-flowing format, real-SIP-quality scans, 12 rows, 27 exemplars total (includes the S/B station-building box)
 
-Tested working — produces `library/<class_name>/exemplar_NN.png` plus `library/index.json` with 31 distinct classes, 60 exemplars total.
+Produces `library/<class_name>/exemplar_NN.png` plus `library/index.json` with 31 distinct classes, 60 exemplars total.
 
-Step 2: Detection methods (TO BUILD)
+Step 2: Detection methods (DONE in `sip_extractor/symbols.py`, `notebooks/03_detect_symbols.ipynb`)
 
 Two complementary approaches against the cropped binary:
 
-- Template matching (OpenCV `matchTemplate`) for distinctive simple shapes: km-marker triangle, S/B station building box, BSLB box, GL gate-lodge box. Fast, no model needed.
-- DINOv2 nearest-neighbor for chained-ellipse signal posts (Distant, Home, Starter, Shunt, etc.). For each candidate region in the SIP, compute a DINOv2-base embedding, find the nearest exemplar in the library. CPU is ~1-2 sec per crop (slow), Colab T4 is ~30 sec total per SIP.
+- Template matching (OpenCV `matchTemplate`) for distinctive simple shapes: km-marker triangle, S/B station building box, BSLB box, GL gate-lodge box. Multi-scale at [0.5, 0.75, 1.0, 1.25, 1.5], TM_CCOEFF_NORMED ≥ 0.7, per-class NMS at IoU 0.3.
+- DINOv2 nearest-neighbor for chained-ellipse signal posts (Distant, Home, Starter, Shunt, Calling-on). Connected components of the binary, filtered by area (200..50_000 px), aspect ratio (0.2..5.0), and overlap with OCR text bboxes. Each candidate is letterboxed to 224x224 RGB and embedded via DINOv2-base CLS token; cosine similarity ≥ 0.6 against exemplar embeddings assigns the class. Per-class NMS at IoU 0.3.
 
-Candidate regions for DINOv2: connected components of the binary that are NOT inside any text bbox (filter using OCR results from Stage 6).
+`Library` in `sip_extractor/symbols.py` keyword-maps the priority class names to the user's slug names from `index.json` (so build_library's exact slugs don't have to match a fixed list).
 
-Output schema:
+Output schema (TypedDict in `sip_extractor/schema.py`):
 
 ```json
 {
@@ -236,9 +236,17 @@ Output schema:
 }
 ```
 
-Scope for first iteration: start with 9 most common classes — Distant, Home, Starter, Shunt, Calling-on, KM marker, S/B box, BSLB, GL. Add more later.
+`anchored_text_id` is set later by Stage 10 composition.
 
-Dependencies: `pip install transformers torch faiss-cpu` (or `faiss-gpu` on Colab).
+Scope for first iteration: 9 most common classes — Distant, Home, Starter, Shunt, Calling-on, KM marker, S/B box, BSLB, GL. Add more later by extending `PRIORITY_CLASSES` in `symbols.py`.
+
+Dependencies: `pip install transformers torch` (faiss not used — brute-force NN over 60 exemplars is microseconds).
+
+Tuning notes (todo on next pass):
+
+- The 0.7 template threshold may be too strict for cross-modal matching (reference-PDF exemplars vs scan-quality SIP binary). Lower to ~0.5 if recall is poor.
+- Multi-scale `[0.5..1.5]` may need to widen to `[0.25..2.0]` if reference DPI differs significantly from SIP DPI.
+- Aspect ratio gate `[0.2..5.0]` may filter out very wide or very tall posts. Check first-pass overlay before adjusting.
 
 ### Stage 9.5: VLM Fallback for OCR (NOT BUILT)
 
