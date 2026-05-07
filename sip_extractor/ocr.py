@@ -48,6 +48,7 @@ def _get_ocr(rec_score_thresh: float):
         return _ocr_singleton
     from paddleocr import PaddleOCR
 
+    print("Loading PaddleOCR (first run on a fresh VM downloads ~few hundred MB)...", flush=True)
     _ocr_singleton = PaddleOCR(
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
@@ -55,6 +56,7 @@ def _get_ocr(rec_score_thresh: float):
         lang="en",
         text_rec_score_thresh=rec_score_thresh,
     )
+    print("PaddleOCR ready.", flush=True)
     return _ocr_singleton
 
 
@@ -115,8 +117,12 @@ def detect(
     rgb = cv2.cvtColor(gray_cropped, cv2.COLOR_GRAY2RGB)
     h, w = rgb.shape[:2]
 
+    tiles = list(_iter_tiles(h, w, tile, overlap))
+    print(f"OCR over {len(tiles)} tiles ({w}x{h}, tile={tile}, overlap={overlap})", flush=True)
+
     entities: list[TextEntity] = []
-    for x0, y0, x1, y1 in _iter_tiles(h, w, tile, overlap):
+    for i, (x0, y0, x1, y1) in enumerate(tiles, 1):
+        print(f"  tile {i}/{len(tiles)} x={x0}:{x1} y={y0}:{y1}", flush=True)
         results = ocr.predict(rgb[y0:y1, x0:x1])
         for r in results:
             for poly, text, score in zip(r["rec_polys"], r["rec_texts"], r["rec_scores"]):
@@ -132,6 +138,7 @@ def detect(
                     }
                 )
 
+    print(f"OCR done: {len(entities)} raw detections (pre-dedup)", flush=True)
     return dedupe(entities)
 
 
