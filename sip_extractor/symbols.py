@@ -28,7 +28,7 @@ from .utils.io import read_json, save_preview, write_json
 
 DINOV2_MODEL_ID = "facebook/dinov2-base"
 DINOV2_INPUT_SIZE = 224
-DEFAULT_NN_COSINE_THRESHOLD = 0.6  # cosine sim, not distance
+DEFAULT_NN_COSINE_THRESHOLD = 0.45  # cosine sim, not distance; cross-modal exemplars need a permissive bar
 DEFAULT_BATCH_SIZE = 16
 DEFAULT_CC_AREA_MIN = 200
 DEFAULT_CC_AREA_MAX = 50_000
@@ -42,17 +42,17 @@ DEFAULT_CC_ASPECT_MAX = 5.0
 # type_name from index.json. First match wins.
 PRIORITY_CLASSES: dict[str, dict[str, list[str]]] = {
     "template_match": {
-        "km_marker": ["km marker", "kilometer marker", "km/hm"],
-        "sb_box": ["station building", "s/b", "sb box"],
-        "bslb": ["bslb", "block section limit"],
-        "gl": ["gate lodge", "gl ", "level crossing"],
+        "km_marker": ["km marker", "kilometer marker", "kilometre", "km/hm", "km stone", "km_stone"],
+        "sb_box": ["station building", "s/b", "sb box", "stn building", "stn_bldg"],
+        "bslb": ["bslb", "block section limit", "block_section", "block limit"],
+        "gl": ["gate lodge", "gl ", "level crossing", "gate_lodge", "boards_gate"],
     },
     "dinov2_nn": {
         "distant": ["distant"],
         "home": ["home"],
         "starter": ["starter"],
         "shunt": ["shunt"],
-        "calling_on": ["calling-on", "calling on", "co signal"],
+        "calling_on": ["calling-on", "calling on", "calling_on", "co signal", "co_signal"],
     },
 }
 
@@ -60,7 +60,7 @@ PRIORITY_CLASSES: dict[str, dict[str, list[str]]] = {
 # at 300 DPI typically wants a 0.5-1.5x rescale of the exemplar. Wide range
 # costs little since each scale is one matchTemplate call.
 DEFAULT_SCALES = (0.5, 0.75, 1.0, 1.25, 1.5)
-DEFAULT_TEMPLATE_THRESHOLD = 0.7
+DEFAULT_TEMPLATE_THRESHOLD = 0.55  # cross-modal (clean PDF exemplar vs scan binary)
 DEFAULT_NMS_IOU = 0.3
 
 

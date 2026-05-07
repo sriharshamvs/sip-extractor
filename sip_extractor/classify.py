@@ -1,7 +1,7 @@
 """Stage 7: regex classification of OCR text into useful buckets.
 
 Categories:
-    signal_id      letter prefix + digits + optional letter suffix  (S63, SH6, C02)
+    signal_id      letter prefix + digits + optional aspect suffix  (S63, SH6, C02, S2(i), SH 14 (ii))
     track_circuit  digits + optional A + T                          (116AT, 305T)
     km_marker      KM/JKM + digits                                   (KM 429)
     track_label    UP/DN/DOWN + MAIN/LOOP/etc, length-capped         (UP MAIN, DN LOOP)
@@ -13,6 +13,13 @@ point_id is restricted to 100-119 to avoid eating dimensions like 200 or 850.
 Station-name detection is intentionally NOT done here; spatial position works
 better than text patterns (an "all caps + 4+ chars" heuristic false-positives
 on STARTER, BSLB, etc.).
+
+Signal IDs with parenthetical aspect suffixes (`SH 14 (i)`, `S2 (ii)`, `CO 20 (ii)`)
+appear on real SIPs to disambiguate aspects of the same signal. The regex matches
+the aspect suffix as an optional trailing group; classification ignores
+whitespace inside the head. text_normalized may collapse spaces in short tokens
+(`S 19` -> `S19`) but leaves longer aspect-suffix tokens alone, so the regex
+operates on the raw text variant when normalization is too aggressive.
 """
 
 from __future__ import annotations
@@ -29,7 +36,8 @@ from .utils.io import save_preview, write_json
 
 PATTERNS: dict[Category, re.Pattern] = {
     "signal_id": re.compile(
-        r"^(S|SH|C|CO|H|D|AS|IB|GL|BSLB)\d{1,3}[A-Z]?$", re.IGNORECASE
+        r"^(S|SH|C|CO|H|D|AS|IB|GL|BSLB)\s?\d{1,3}[A-Z]?(\s*\([ivx]+\))?$",
+        re.IGNORECASE,
     ),
     "track_circuit": re.compile(r"^\d{1,4}A?T$"),
     "km_marker": re.compile(r"^J?K\.?\s?M\.?\s?\d{2,4}", re.IGNORECASE),

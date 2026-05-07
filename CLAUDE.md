@@ -9,7 +9,7 @@ For full background, schema decisions, and rationale, see [HANDOFF.md](HANDOFF.m
 - **Stages 1-7 (working):** PDF render, color-markup removal, Sauvola binarize, edge crop, OCR (PaddleOCR 3.5.0), regex text classification. Live in [sip_preprocessing.ipynb](sip_preprocessing.ipynb).
 - **Stage 8 (broken):** Track detection. Multiple iterations failed. Deferred until after Stage 9. Do not retry without reading the failure modes in HANDOFF.md.
 - **Symbol library (working):** Exemplar extraction from reference PDFs in [notebooks/02_build_library.ipynb](notebooks/02_build_library.ipynb). Produces `library/<class_name>/exemplar_NN.png` plus `library/index.json`.
-- **Stage 9 (working, untuned):** Symbol detection. Template matching for KM marker / S/B box / BSLB / GL; DINOv2-base nearest-neighbor for Distant / Home / Starter / Shunt / Calling-on. Module: [sip_extractor/symbols.py](sip_extractor/symbols.py). Entry point: [notebooks/03_detect_symbols.ipynb](notebooks/03_detect_symbols.ipynb). Thresholds (`0.7` template correlation, `0.6` cosine) are starting points; tune empirically per SIP.
+- **Stage 9 (working, untuned):** Symbol detection. Template matching for KM marker / S/B box / BSLB / GL; DINOv2-base nearest-neighbor for Distant / Home / Starter / Shunt / Calling-on. Module: [sip_extractor/symbols.py](sip_extractor/symbols.py). Entry point: [notebooks/03_detect_symbols.ipynb](notebooks/03_detect_symbols.ipynb). Thresholds (`0.55` template correlation, `0.45` cosine) tuned for cross-modal matching against scan-quality SIP binaries; keep tuning per SIP.
 - **Stages 9.5, 10, 11 (not built):** VLM OCR fallback, signal composition, final merged JSON.
 
 ## Repository Layout
