@@ -22,3 +22,8 @@ def bbox_iou(a: Bbox, b: Bbox) -> float:
 
 def bbox_center(b: Bbox) -> tuple[int, int]:
     return b[0] + b[2] // 2, b[1] + b[3] // 2
+
+
+def bbox_overlaps_any(b: Bbox, others: Sequence[Bbox], iou_thr: float = 0.0) -> bool:
+    """True if b overlaps any bbox in others above iou_thr (default: any overlap)."""
+    return any(bbox_iou(b, o) > iou_thr for o in others)

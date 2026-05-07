@@ -26,6 +26,19 @@ class TextEntity(TypedDict, total=False):
     engine: str  # "paddleocr" | "qwen-vl" — set by Stage 9.5
 
 
+SymbolMethod = Literal["template_match", "dinov2_nn"]
+
+
+class Symbol(TypedDict, total=False):
+    id: str                # "symbol_001"
+    type: Literal["symbol"]
+    class_name: str        # slug from library/index.json, e.g. "MainHomeWithoutJR"
+    bbox: list[int]        # [x, y, w, h] in cropped-binary frame
+    confidence: float
+    method: SymbolMethod
+    anchored_text_id: str  # set later by Stage 10 composition
+
+
 @dataclass
 class PreprocessResult:
     """What preprocessing produces. The arrays stay in memory for downstream
