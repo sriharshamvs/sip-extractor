@@ -11,9 +11,16 @@ Category is added later by classify.run().
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Iterable
+
+# Some paddleocr 3.5.0 + paddlepaddle CPU combos crash inside an unimplemented
+# oneDNN attribute conversion. Force the legacy executor and turn off oneDNN
+# before any paddle import. setdefault so notebook overrides win.
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
+os.environ.setdefault("FLAGS_enable_pir_in_executor", "0")
 
 import cv2
 import numpy as np
