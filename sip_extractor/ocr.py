@@ -39,23 +39,44 @@ DEDUPE_IOU = 0.3
 _ocr_singleton = None
 
 
-def _get_ocr(rec_score_thresh: float):
-    """Lazy-load PaddleOCR. First call triggers a model download (a few hundred
-    MB) cached under ~/.paddleocr/ (or PADDLE_HOME on Colab).
-    """
-    global _ocr_singleton
-    if _ocr_singleton is not None:
-        return _ocr_singleton
+def _build_paddleocr(rec_score_thresh: float):
     from paddleocr import PaddleOCR
 
-    print("Loading PaddleOCR (first run on a fresh VM downloads ~few hundred MB)...", flush=True)
-    _ocr_singleton = PaddleOCR(
+    return PaddleOCR(
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=True,
         lang="en",
         text_rec_score_thresh=rec_score_thresh,
     )
+
+
+def _get_ocr(rec_score_thresh: float):
+    """Lazy-load PaddleOCR. First call triggers a model download (a few hundred
+    MB) cached under ~/.paddleocr/ (or PADDLE_HOME on Colab).
+
+    paddleocr 3.5.0's paddlex bootstrap holds a module-level singleton that
+    raises "PDX has already been initialized" if the import path runs twice
+    (notebook autoreload, our module being reloaded, etc.). On that error we
+    evict paddleocr and paddlex from sys.modules and retry once.
+    """
+    import sys
+
+    global _ocr_singleton
+    if _ocr_singleton is not None:
+        return _ocr_singleton
+
+    print("Loading PaddleOCR (first run on a fresh VM downloads ~few hundred MB)...", flush=True)
+    try:
+        _ocr_singleton = _build_paddleocr(rec_score_thresh)
+    except RuntimeError as e:
+        if "already been initialized" not in str(e):
+            raise
+        print("paddlex re-init guard tripped; evicting cached modules and retrying...", flush=True)
+        for mod in list(sys.modules):
+            if mod == "paddleocr" or mod.startswith("paddleocr.") or mod == "paddlex" or mod.startswith("paddlex."):
+                del sys.modules[mod]
+        _ocr_singleton = _build_paddleocr(rec_score_thresh)
     print("PaddleOCR ready.", flush=True)
     return _ocr_singleton
 
