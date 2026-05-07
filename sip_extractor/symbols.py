@@ -5,7 +5,8 @@ Two detectors against the cropped binary:
 - Template matching for distinctive simple shapes (KM marker, S/B box, BSLB,
   GL gate-lodge box). Multi-scale OpenCV matchTemplate.
 - DINOv2 nearest-neighbour for chained-ellipse signal posts (Distant, Home,
-  Starter, Shunt, Calling-on). Added in a follow-up commit.
+  Starter, Shunt, Calling-on). Connected components on the binary -> letterbox
+  to 224x224 -> DINOv2-base CLS embedding -> cosine NN against exemplars.
 
 Output schema is sip_extractor.schema.Symbol. Detections that fall inside an
 OCR text bbox are dropped to suppress matches on dense label clusters.
@@ -23,6 +24,16 @@ import numpy as np
 from .schema import Symbol, TextEntity
 from .utils.geometry import bbox_overlaps_any
 from .utils.io import read_json, save_preview, write_json
+
+
+DINOV2_MODEL_ID = "facebook/dinov2-base"
+DINOV2_INPUT_SIZE = 224
+DEFAULT_NN_COSINE_THRESHOLD = 0.6  # cosine sim, not distance
+DEFAULT_BATCH_SIZE = 16
+DEFAULT_CC_AREA_MIN = 200
+DEFAULT_CC_AREA_MAX = 50_000
+DEFAULT_CC_ASPECT_MIN = 0.2
+DEFAULT_CC_ASPECT_MAX = 5.0
 
 
 # Keyword sets used to map the user's library slugs onto the priority classes
@@ -164,13 +175,14 @@ def template_match(
     scales: Iterable[float] = DEFAULT_SCALES,
     threshold: float = DEFAULT_TEMPLATE_THRESHOLD,
     nms_iou: float = DEFAULT_NMS_IOU,
+    starting_id: int = 1,
 ) -> list[Symbol]:
     """Detect simple-shape symbols (km marker, S/B, BSLB, GL) via multi-scale
     template matching. Drops detections that overlap any text bbox.
     """
     haystack = binary_cropped
     out: list[Symbol] = []
-    next_id = 1
+    next_id = starting_id
     for slug in library.classes_for_method("template_match"):
         all_matches: list[tuple[int, int, int, int, float]] = []
         for ex in library.exemplars(slug):
@@ -191,6 +203,177 @@ def template_match(
             next_id += 1
         print(f"[symbols] template_match {slug}: {len(kept)} pre-filter -> "
               f"{sum(1 for s in out if s['class_name'] == slug)} kept", flush=True)
+    return out
+
+
+_embedder_singleton: dict | None = None
+
+
+def _get_embedder():
+    """Lazy-load DINOv2 model + image processor + device. Cached as a singleton.
+
+    First call downloads ~340MB of weights, cached under HF_HOME (which the
+    notebook setup cell points at .model_cache/ on Drive so it persists).
+    """
+    global _embedder_singleton
+    if _embedder_singleton is not None:
+        return _embedder_singleton
+
+    import torch
+    from transformers import AutoImageProcessor, AutoModel
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Loading DINOv2 ({DINOV2_MODEL_ID}, device={device}; first run downloads ~340 MB)...", flush=True)
+    processor = AutoImageProcessor.from_pretrained(DINOV2_MODEL_ID)
+    model = AutoModel.from_pretrained(DINOV2_MODEL_ID).to(device).eval()
+    print("DINOv2 ready.", flush=True)
+    _embedder_singleton = {"model": model, "processor": processor, "device": device, "torch": torch}
+    return _embedder_singleton
+
+
+def _letterbox_to_rgb(img: np.ndarray, size: int = DINOV2_INPUT_SIZE) -> np.ndarray:
+    """Letterbox-pad a single-channel image to a square RGB (white background),
+    preserving aspect ratio. Output is HxWx3 uint8.
+    """
+    if img.ndim == 2:
+        h, w = img.shape
+    else:
+        h, w = img.shape[:2]
+    scale = size / max(h, w)
+    nh, nw = max(1, int(round(h * scale))), max(1, int(round(w * scale)))
+    resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
+    canvas = np.full((size, size), 255, dtype=np.uint8)
+    y0 = (size - nh) // 2
+    x0 = (size - nw) // 2
+    canvas[y0:y0 + nh, x0:x0 + nw] = resized
+    return cv2.cvtColor(canvas, cv2.COLOR_GRAY2RGB)
+
+
+def _embed_batch(images: list[np.ndarray]) -> np.ndarray:
+    """Embed a list of letterboxed RGB uint8 images. Returns L2-normalized
+    (N, 768) float32 ndarray.
+    """
+    emb = _get_embedder()
+    torch = emb["torch"]
+    inputs = emb["processor"](images=images, return_tensors="pt").to(emb["device"])
+    with torch.no_grad():
+        out = emb["model"](**inputs)
+    cls = out.last_hidden_state[:, 0, :]  # CLS token
+    cls = torch.nn.functional.normalize(cls, dim=-1)
+    return cls.cpu().numpy().astype(np.float32)
+
+
+def _embed(images: list[np.ndarray], batch_size: int = DEFAULT_BATCH_SIZE) -> np.ndarray:
+    """Embed an arbitrary-length list, batching internally."""
+    if not images:
+        return np.zeros((0, 768), dtype=np.float32)
+    out: list[np.ndarray] = []
+    for i in range(0, len(images), batch_size):
+        out.append(_embed_batch(images[i:i + batch_size]))
+    return np.concatenate(out, axis=0)
+
+
+def _candidate_regions(
+    binary_cropped: np.ndarray,
+    text_bboxes: list[list[int]],
+    area_min: int = DEFAULT_CC_AREA_MIN,
+    area_max: int = DEFAULT_CC_AREA_MAX,
+    aspect_min: float = DEFAULT_CC_ASPECT_MIN,
+    aspect_max: float = DEFAULT_CC_ASPECT_MAX,
+) -> list[tuple[int, int, int, int]]:
+    """Connected components on inverted binary (ink as foreground). Filter by
+    area, aspect ratio, and OCR text bbox overlap. Returns [(x, y, w, h), ...].
+    """
+    inv = cv2.bitwise_not(binary_cropped)
+    n, _, stats, _ = cv2.connectedComponentsWithStats(inv, connectivity=8)
+    keep: list[tuple[int, int, int, int]] = []
+    for i in range(1, n):  # 0 is background
+        x, y, w, h, area = stats[i]
+        if area < area_min or area > area_max:
+            continue
+        if w == 0 or h == 0:
+            continue
+        ar = w / h
+        if ar < aspect_min or ar > aspect_max:
+            continue
+        if bbox_overlaps_any([int(x), int(y), int(w), int(h)], text_bboxes):
+            continue
+        keep.append((int(x), int(y), int(w), int(h)))
+    return keep
+
+
+def dinov2_nn(
+    binary_cropped: np.ndarray,
+    library: Library,
+    text_bboxes: list[list[int]],
+    starting_id: int = 1,
+    cosine_threshold: float = DEFAULT_NN_COSINE_THRESHOLD,
+    nms_iou: float = DEFAULT_NMS_IOU,
+) -> list[Symbol]:
+    """Detect chained-ellipse signal classes via DINOv2 nearest-neighbor.
+
+    Pipeline: connected components -> filter -> letterbox 224x224 -> DINOv2
+    CLS embedding -> cosine NN against exemplar embeddings -> per-class NMS.
+    """
+    slugs = library.classes_for_method("dinov2_nn")
+    if not slugs:
+        print("[symbols] dinov2_nn: no library classes resolved; skipping", flush=True)
+        return []
+
+    # Embed exemplars once. Track which slug each row belongs to.
+    exemplar_imgs: list[np.ndarray] = []
+    exemplar_slugs: list[str] = []
+    for slug in slugs:
+        for ex in library.exemplars(slug):
+            exemplar_imgs.append(_letterbox_to_rgb(ex))
+            exemplar_slugs.append(slug)
+    if not exemplar_imgs:
+        print(f"[symbols] dinov2_nn: 0 exemplars for {slugs}; skipping", flush=True)
+        return []
+    print(f"[symbols] dinov2_nn: embedding {len(exemplar_imgs)} exemplars across {len(slugs)} classes...", flush=True)
+    exemplar_emb = _embed(exemplar_imgs)
+
+    candidates = _candidate_regions(binary_cropped, text_bboxes)
+    print(f"[symbols] dinov2_nn: {len(candidates)} candidate regions after CC filter", flush=True)
+    if not candidates:
+        return []
+
+    # Crop and embed each candidate.
+    candidate_imgs = [
+        _letterbox_to_rgb(binary_cropped[y:y + h, x:x + w])
+        for x, y, w, h in candidates
+    ]
+    print(f"[symbols] dinov2_nn: embedding {len(candidate_imgs)} candidates...", flush=True)
+    cand_emb = _embed(candidate_imgs)
+
+    # Cosine similarity since both sides are L2-normalized.
+    sims = cand_emb @ exemplar_emb.T  # (N_candidates, N_exemplars)
+    best_ex = sims.argmax(axis=1)
+    best_score = sims.max(axis=1)
+
+    # Group by class for NMS.
+    by_class: dict[str, list[tuple[int, int, int, int, float]]] = {slug: [] for slug in slugs}
+    for i, ((x, y, w, h), score) in enumerate(zip(candidates, best_score)):
+        if score < cosine_threshold:
+            continue
+        slug = exemplar_slugs[best_ex[i]]
+        by_class[slug].append((x, y, w, h, float(score)))
+
+    out: list[Symbol] = []
+    next_id = starting_id
+    for slug, hits in by_class.items():
+        kept = _nms(hits, nms_iou)
+        for x, y, w, h, score in kept:
+            out.append({
+                "id": f"symbol_{next_id:03d}",
+                "type": "symbol",
+                "class_name": slug,
+                "bbox": [x, y, w, h],
+                "confidence": score,
+                "method": "dinov2_nn",
+            })
+            next_id += 1
+        print(f"[symbols] dinov2_nn {slug}: {len(hits)} pre-NMS -> {len(kept)} kept", flush=True)
     return out
 
 
@@ -221,7 +404,7 @@ def run(
     text_entities: list[TextEntity],
     library: Library,
     out_dir: Path,
-    methods: tuple[str, ...] = ("template_match",),
+    methods: tuple[str, ...] = ("template_match", "dinov2_nn"),
     write_overlay: bool = True,
 ) -> list[Symbol]:
     """Run Stage 9 end to end. Writes symbols.json (and optionally an overlay
@@ -233,8 +416,9 @@ def run(
     text_bboxes = [t["bbox"] for t in text_entities if "bbox" in t]
     symbols: list[Symbol] = []
     if "template_match" in methods:
-        symbols.extend(template_match(binary_cropped, library, text_bboxes))
-    # dinov2_nn lands in the next commit.
+        symbols.extend(template_match(binary_cropped, library, text_bboxes, starting_id=len(symbols) + 1))
+    if "dinov2_nn" in methods:
+        symbols.extend(dinov2_nn(binary_cropped, library, text_bboxes, starting_id=len(symbols) + 1))
 
     write_json(symbols, out_dir / "symbols.json")
     if write_overlay:
